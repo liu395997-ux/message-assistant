@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#146B57</color>
+    <color name="brand_dark">#0C493C</color>
+    <color name="brand_soft">#DCEFE8</color>
+    <color name="surface">#F5F7F4</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="text_primary">#16211D</color>
+    <color name="text_secondary">#5C6A64</color>
+    <color name="border">#DCE5DF</color>
+    <color name="warning">#9B5E00</color>
+    <color name="warning_soft">#FFF0D5</color>
+    <color name="danger">#A33B32</color>
+    <color name="white_80">#CCFFFFFF</color>
+</resources>
