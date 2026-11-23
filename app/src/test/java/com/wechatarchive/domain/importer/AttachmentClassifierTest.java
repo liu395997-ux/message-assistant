@@ -38,6 +38,40 @@ public final class AttachmentClassifierTest {
     }
 
     @Test
+    public void classifiesFilesFromProviderMimeTypes() {
+        assertEquals(
+                AttachmentKind.IMAGE,
+                AttachmentClassifier.classify("", "image/jpeg", "download"));
+        assertEquals(
+                AttachmentKind.VIDEO,
+                AttachmentClassifier.classify("", "video/mp4", "download"));
+        assertEquals(
+                AttachmentKind.AUDIO,
+                AttachmentClassifier.classify("", "audio/mpeg", "download"));
+        assertEquals(
+                AttachmentKind.DOCUMENT,
+                AttachmentClassifier.classify("", "application/pdf", "download"));
+        assertEquals(
+                AttachmentKind.DOCUMENT,
+                AttachmentClassifier.classify("", "text/plain", "download"));
+        assertEquals(
+                AttachmentKind.ANIMATED_STICKER,
+                AttachmentClassifier.classify("", "image/gif", "download"));
+        assertEquals(
+                AttachmentKind.OTHER,
+                AttachmentClassifier.classify("", "application/octet-stream", "download"));
+    }
+
+    @Test
+    public void recognizesTextLikeDocumentExtensions() {
+        assertEquals(
+                AttachmentKind.DOCUMENT,
+                AttachmentClassifier.classify("file", "file", "notes.md"));
+        assertEquals(
+                AttachmentKind.DOCUMENT,
+                AttachmentClassifier.classify("file", "file", "config.xml"));
+    }
+    @Test
     public void detectsCommonMimeTypes() {
         assertEquals("image/jpeg", AttachmentClassifier.mimeTypeForName("a.jpg"));
         assertEquals("video/mp4", AttachmentClassifier.mimeTypeForName("a.mp4"));

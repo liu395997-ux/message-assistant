@@ -110,11 +110,6 @@ public final class AttachmentContentProvider extends ContentProvider {
         } catch (NumberFormatException error) {
             return null;
         }
-        ArchiveDatabase database = new ArchiveDatabase(getContext());
-        try {
-            return database.attachment(id);
-        } finally {
-            database.close();
-        }
+        return ArchiveDatabase.getInstance(getContext()).attachment(id);
     }
 }

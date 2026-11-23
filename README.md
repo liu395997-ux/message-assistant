@@ -8,12 +8,15 @@
 
 - 捕获 `com.tencent.mm` 的新微信通知文字。
 - 支持个人聊天、群聊、Android `MessagingStyle`、采集开关和会话白名单。
+- 支持直接保存兼容通知中附带的图片（`Notification.EXTRA_PICTURE`）。
 - 支持导入 Moect 导出的未加密 ZIP，可包含多个个人或群聊。
+- 支持从手机多选导入图片、视频、GIF/WebP 表情、音频、PDF、Office 文件、压缩包等，统一进入“本地媒体库”。
 - 保存图片、视频、语音、文档、GIF/WebP 动画表情和其他文件。
 - 使用本机 SQLite v2 保存消息及附件元数据，使用 SHA-256 生成附件文件名并去重。
 - 支持会话、发送者、正文和附件名搜索，支持单条删除和全部清空。
 - 消息详情显示附件类型、名称、大小和可用状态。
-- 图片和动画表情可在应用内预览；视频、音频和文档可通过只读内容 URI 交给其他应用打开。
+- 图片和动画表情可在应用内预览，视频和音频可在应用内播放，文本类文件可显示内容。
+- 其他文档显示名称、类型和大小，并可通过只读内容 URI 交给已安装的查看器打开。
 - 保存或分享 Markdown 时，会列出每个消息的附件名称、类型及是否已取得。
 - 不需要电脑服务、账号或网络权限；应用没有 `INTERNET` 权限。
 
@@ -47,7 +50,7 @@ Android 和微信均未提供读取历史聊天及原始媒体附件的公开接
 
 ## 安装
 
-1. 将 `微信聊天归档器-v1.1.0.apk` 复制到 Android 手机。
+1. 将 `微信聊天归档器-v1.2.0.apk` 复制到 Android 手机。
 2. 点击 APK，并允许当前文件管理器“安装未知应用”。
 3. 安装并打开应用。
 4. 若要实时采集，点击“打开通知访问设置”，找到“微信聊天归档器”并开启通知访问。
@@ -57,10 +60,11 @@ Android 和微信均未提供读取历史聊天及原始媒体附件的公开接
 
 ## 使用
 
-- 微信收到新通知后，应用会把通知中可见的标题、摘要、会话和发送者写入本地数据库。
+- 微信收到新通知后，应用会把通知中可见的标题、摘要、会话和发送者写入本地数据库；若通知附带图片，也会把图片保存为附件。
+- 点击“导入本地媒体”可以多选手机中的图片、视频、表情、音频和各类文件，文件会复制到应用私有目录。
 - 导入 Moect ZIP 时，会解析聊天文本、时间、发送者和附件引用。
-- 点击列表中的消息查看全文和附件。点击已存储的图片或 GIF/WebP 表情可预览；其他附件会
-  调用系统应用打开。
+- 点击列表中的消息查看全文和附件缩略图。图片与 GIF/WebP 表情可放大预览，视频和音频在应用内播放，文本文件可直接查看内容。
+- PDF、Office、压缩包等二进制文件会显示文件信息，并可调用系统应用打开。
 - “保存 Markdown”通过系统文件选择器写入完整归档。
 - “分享 Markdown”通过系统分享面板发送真实的 `.md` 文件。
 - 搜索只影响当前显示列表，Markdown 导出始终包含全部记录。
@@ -78,6 +82,7 @@ Android 和微信均未提供读取历史聊天及原始媒体附件的公开接
 - 安装、授权和导入前的通知；
 - 被设置为免打扰或关闭通知的会话；
 - 只显示“N 条新消息”的合并通知中的具体内容；
+- 微信通知本身不包含视频、文件和多数表情包的原始数据，需通过“导入本地媒体”或 Moect ZIP 获取；
 - 微信没有提供给 Moect、或 Moect 导出时未取得的原始附件；
 - 没有有效读取凭据、仍处于加密状态或已经过期的媒体；
 - 微信专有且无法解析的动画表情格式。无法解码时只能保留原始文件或标记为不支持。
@@ -133,8 +138,11 @@ SQLite
 - `importing/MoectZipImporter.java`：ZIP 安全校验、两遍导入、附件复制和重复导入处理。
 - `importing/AttachmentStore.java`：应用私有附件存储、哈希、路径边界校验和删除。
 - `data/ArchiveDatabase.java`：SQLite v2、消息/附件关联、查询和级联删除。
+- `importing/LocalMediaImporter.java`：手机多选文件的元数据解析、附件复制和本地媒体库记录。
+- `importing/NotificationPictureArchiver.java`：把通知附带图片保存为消息附件。
 - `export/AttachmentContentProvider.java`：只读附件 URI。
-- `service/WeChatNotificationListener.java`：通知字段提取，兼容 API 26–29。
+- `service/WeChatNotificationListener.java`：通知字段提取。
+- `service/MessagingStyleExtractor.java`：不依赖 API 30 专用方法，兼容 API 26+ 的 MessagingStyle 解析。
 - `domain/MarkdownExporter.java`：Markdown 内容和附件清单生成。
 
 ## 构建与测试
@@ -156,8 +164,9 @@ Android 仪器测试需要已启动的模拟器或设备：
 .\gradlew.bat connectedDebugAndroidTest
 ```
 
-测试覆盖通知解析、Moect JSON、附件分类、路径安全、ZIP 导入、重复导入、SQLite 迁移、
-附件持久化、只读 Provider、Markdown 导出、采集策略和白名单。具体数量以每次测试报告为准。
+测试覆盖通知解析、MessagingStyle Bundle 兼容解析、Moect JSON、附件分类、路径安全、ZIP 导入、
+重复导入、SQLite 迁移、数据库单例复用、附件持久化、只读 Provider、Markdown 导出、采集策略和
+白名单。具体数量以每次测试报告为准。
 
 交付的 release APK 使用本机 Android Debug 证书完成个人安装签名。该 APK 可正常安装，但
 不可用于应用商店发布。若以后更换签名，请先导出已有记录，再卸载旧版本安装新版本。

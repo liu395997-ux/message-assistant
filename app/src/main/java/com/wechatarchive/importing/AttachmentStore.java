@@ -31,7 +31,19 @@ public final class AttachmentStore {
             File source,
             long messageId,
             String displayName) throws IOException {
-        if (messageId <= 0 || source == null || !source.isFile()) {
+        if (source == null || !source.isFile()) {
+            throw new IOException("附件源文件无效");
+        }
+        try (InputStream input = new FileInputStream(source)) {
+            return store(input, messageId, displayName);
+        }
+    }
+
+    public StoredAttachment store(
+            InputStream source,
+            long messageId,
+            String displayName) throws IOException {
+        if (messageId <= 0 || source == null) {
             throw new IOException("附件源文件无效");
         }
         File messageDirectory = new File(rootDirectory, String.valueOf(messageId));
@@ -47,11 +59,10 @@ public final class AttachmentStore {
                 ".incoming-" + UUID.randomUUID());
         MessageDigest digest = sha256();
         long size = 0L;
-        try (InputStream input = new FileInputStream(source);
-             FileOutputStream output = new FileOutputStream(temporary)) {
+        try (FileOutputStream output = new FileOutputStream(temporary)) {
             byte[] buffer = new byte[64 * 1024];
             int read;
-            while ((read = input.read(buffer)) != -1) {
+            while ((read = source.read(buffer)) != -1) {
                 size += read;
                 if (size > MAX_ATTACHMENT_BYTES) {
                     throw new IOException("单个附件超过 2 GB 安全上限");

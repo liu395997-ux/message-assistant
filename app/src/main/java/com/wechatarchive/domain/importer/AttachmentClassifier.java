@@ -13,30 +13,38 @@ public final class AttachmentClassifier {
         String message = lower(messageKind);
         String resource = lower(resourceKind);
         String extension = extension(lower(nameOrPath));
+        String mime = resource.contains("/") ? resource : "";
 
         if ("emoji".equals(message)) {
             return AttachmentKind.ANIMATED_STICKER;
         }
-        if ("gif".equals(extension) || "webp".equals(extension)) {
+        if ("gif".equals(extension)
+                || "webp".equals(extension)
+                || "image/gif".equals(mime)
+                || "image/webp".equals(mime)) {
             return AttachmentKind.ANIMATED_STICKER;
         }
         if ("video".equals(message)
                 || "video".equals(resource)
+                || mime.startsWith("video/")
                 || isVideo(extension)) {
             return AttachmentKind.VIDEO;
         }
         if ("voice".equals(message)
                 || "audio".equals(resource)
+                || mime.startsWith("audio/")
                 || isAudio(extension)) {
             return AttachmentKind.AUDIO;
         }
         if ("file".equals(message)
                 || "file".equals(resource)
+                || isDocumentMime(mime)
                 || isDocument(extension)) {
             return AttachmentKind.DOCUMENT;
         }
         if ("image".equals(message)
                 || "image".equals(resource)
+                || mime.startsWith("image/")
                 || isImage(extension)) {
             return AttachmentKind.IMAGE;
         }
@@ -112,6 +120,15 @@ public final class AttachmentClassifier {
                 return "text/csv";
             case "json":
                 return "application/json";
+            case "xml":
+                return "application/xml";
+            case "md":
+                return "text/markdown";
+            case "log":
+                return "text/plain";
+            case "html":
+            case "htm":
+                return "text/html";
             case "zip":
                 return "application/zip";
             default:
@@ -165,7 +182,22 @@ public final class AttachmentClassifier {
                 || "txt".equals(extension)
                 || "csv".equals(extension)
                 || "json".equals(extension)
+                || "xml".equals(extension)
+                || "md".equals(extension)
+                || "log".equals(extension)
+                || "html".equals(extension)
+                || "htm".equals(extension)
                 || "zip".equals(extension);
+    }
+
+    private static boolean isDocumentMime(String mime) {
+        return "application/pdf".equals(mime)
+                || "application/msword".equals(mime)
+                || "application/json".equals(mime)
+                || "application/xml".equals(mime)
+                || "application/zip".equals(mime)
+                || mime.startsWith("text/")
+                || mime.startsWith("application/vnd.");
     }
 
     private static boolean isImage(String extension) {

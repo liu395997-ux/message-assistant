@@ -16,6 +16,8 @@ import android.graphics.Typeface;
 import android.graphics.ImageDecoder;
 import android.graphics.drawable.AnimatedImageDrawable;
 import android.graphics.drawable.Drawable;
+import android.media.MediaMetadataRetriever;
+import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -31,11 +33,13 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.MediaController;
 import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.VideoView;
 
 import com.wechatarchive.data.ArchiveDatabase;
 import com.wechatarchive.data.ArchiveEntry;
@@ -51,6 +55,7 @@ import com.wechatarchive.domain.importer.AttachmentStatus;
 import com.wechatarchive.export.AttachmentContentProvider;
 import com.wechatarchive.export.ShareFileStore;
 import com.wechatarchive.importing.AttachmentStore;
+import com.wechatarchive.importing.LocalMediaImporter;
 import com.wechatarchive.importing.MoectZipImporter;
 import com.wechatarchive.service.NotificationAccess;
 import com.wechatarchive.service.WeChatNotificationListener;
@@ -58,6 +63,7 @@ import com.wechatarchive.service.WeChatNotificationListener;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -75,6 +81,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class MainActivity extends Activity {
     private static final int REQUEST_SAVE_MARKDOWN = 3101;
     private static final int REQUEST_IMPORT_MOECT = 3102;
+    private static final int REQUEST_IMPORT_LOCAL_MEDIA = 3103;
     private static final DateTimeFormatter LIST_TIME =
             DateTimeFormatter.ofPattern("MM-dd HH:mm", Locale.CHINA);
 
@@ -99,7 +106,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        database = new ArchiveDatabase(this);
+        database = ArchiveDatabase.getInstance(this);
         settings = new ArchiveSettings(this);
         attachmentStore = new AttachmentStore(this);
         archiveReceiver = new BroadcastReceiver() {
@@ -145,7 +152,6 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         io.shutdownNow();
-        database.close();
         super.onDestroy();
     }
 
@@ -213,13 +219,17 @@ public final class MainActivity extends Activity {
         importRow.setPadding(dp(16), 0, dp(16), dp(8));
         root.addView(importRow);
 
-        Button importButton = actionButton("导入 Moect ZIP", true);
+        Button localMediaButton = actionButton("导入本地媒体", true);
+        localMediaButton.setOnClickListener(view -> openLocalMediaPicker());
+        importRow.addView(localMediaButton, weighted(1f, 0));
+
+        Button importButton = actionButton("导入 Moect ZIP", false);
         importButton.setOnClickListener(view -> confirmImportMoect());
-        importRow.addView(importButton, weighted(1, 0));
+        importRow.addView(importButton, weighted(1f, dp(8)));
 
         Button refreshButton = actionButton("刷新", false);
         refreshButton.setOnClickListener(view -> refreshData());
-        importRow.addView(refreshButton, weighted(0.36f, dp(8)));
+        importRow.addView(refreshButton, weighted(0.5f, dp(8)));
 
         searchInput = new EditText(this);
         searchInput.setSingleLine(true);
@@ -250,8 +260,9 @@ public final class MainActivity extends Activity {
         });
 
         TextView boundary = text(
-                "通知采集只包含授权后可见内容。完整历史与媒体可在 Windows 使用 "
-                        + "Moect 导出 ZIP 后导入；应用不会读取微信私有数据库。",
+                "通知仅能采集授权后可见的文字和少数应用附带图片。视频、文件与表情"
+                        + "可从本机直接导入，或通过 Moect 历史 ZIP 导入；"
+                        + "应用不会读取微信私有数据库。",
                 12,
                 getColor(R.color.text_secondary),
                 Typeface.NORMAL);
@@ -424,6 +435,47 @@ public final class MainActivity extends Activity {
                 .show();
     }
 
+    private void openLocalMediaPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try {
+            startActivityForResult(intent, REQUEST_IMPORT_LOCAL_MEDIA);
+        } catch (ActivityNotFoundException error) {
+            toast("系统没有可用的文件选择界面");
+        }
+    }
+
+    private void importLocalMedia(List<Uri> uris) {
+        if (uris == null || uris.isEmpty()) {
+            return;
+        }
+        toast("正在保存所选的图片、视频和文件…");
+        io.execute(() -> {
+            LocalMediaImporter importer = new LocalMediaImporter(
+                    this,
+                    database,
+                    attachmentStore);
+            LocalMediaImporter.ImportResult result = importer.importUris(uris);
+            runOnUiThread(() -> {
+                if (result.getImportedCount() == 0) {
+                    toast(result.getFailedCount() == 0
+                            ? "没有可导入的文件"
+                            : "导入失败，共 " + result.getFailedCount() + " 个文件");
+                } else {
+                    String message = "已导入 "
+                            + result.getImportedCount()
+                            + " 个文件到本地媒体库";
+                    if (result.getFailedCount() > 0) {
+                        message += "，失败 " + result.getFailedCount() + " 个";
+                    }
+                    toast(message);
+                }
+                refreshData();
+            });
+        });
+    }
     private void openMoectPicker() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -558,7 +610,12 @@ public final class MainActivity extends Activity {
         content.addView(heading, headingParams);
 
         for (AttachmentEntry attachment : attachments) {
-            TextView row = text(
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            addAttachmentThumbnail(row, attachment);
+
+            TextView info = text(
                     kindLabel(attachment.getKind())
                             + " · "
                             + attachment.getDisplayName()
@@ -569,8 +626,14 @@ public final class MainActivity extends Activity {
                             ? getColor(R.color.brand_dark)
                             : getColor(R.color.text_secondary),
                     Typeface.NORMAL);
+            LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    1f);
+            infoParams.setMarginStart(dp(10));
+            row.addView(info, infoParams);
             row.setBackgroundResource(R.drawable.bg_card);
-            row.setPadding(dp(14), dp(10), dp(14), dp(10));
+            row.setPadding(dp(10), dp(8), dp(10), dp(8));
             row.setClickable(true);
             row.setOnClickListener(view -> {
                 if (attachment.isAvailable()) {
@@ -587,12 +650,127 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void viewAttachment(AttachmentEntry attachment) {
-        if (attachment.getKind() == AttachmentKind.IMAGE
-                || attachment.getKind() == AttachmentKind.ANIMATED_STICKER) {
-            showImagePreview(attachment);
+    private void addAttachmentThumbnail(
+            LinearLayout row,
+            AttachmentEntry attachment) {
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setBackgroundResource(R.drawable.bg_input);
+        int size = dp(64);
+        LinearLayout.LayoutParams imageParams =
+                new LinearLayout.LayoutParams(size, size);
+
+        if (attachment.isAvailable()) {
+            try {
+                File file = attachmentStore.resolve(attachment.getLocalPath());
+                Bitmap thumbnail = null;
+                if (attachment.getKind() == AttachmentKind.IMAGE
+                        || attachment.getKind() == AttachmentKind.ANIMATED_STICKER) {
+                    thumbnail = decodeThumbnail(file, size);
+                } else if (attachment.getKind() == AttachmentKind.VIDEO) {
+                    thumbnail = videoThumbnail(file);
+                }
+                if (thumbnail != null) {
+                    image.setImageBitmap(thumbnail);
+                } else {
+                    setFileBadge(image, attachment);
+                }
+            } catch (IOException error) {
+                setFileBadge(image, attachment);
+            }
         } else {
-            openAttachmentExternally(attachment);
+            setFileBadge(image, attachment);
+        }
+        row.addView(image, imageParams);
+    }
+
+    private void setFileBadge(ImageView image, AttachmentEntry attachment) {
+        image.setScaleType(ImageView.ScaleType.CENTER);
+        String label;
+        switch (attachment.getKind()) {
+            case VIDEO:
+                label = "视频";
+                break;
+            case AUDIO:
+                label = "音频";
+                break;
+            case DOCUMENT:
+                label = fileExtension(attachment.getDisplayName());
+                break;
+            case ANIMATED_STICKER:
+                label = "表情";
+                break;
+            case IMAGE:
+                label = "图片";
+                break;
+            default:
+                label = "文件";
+                break;
+        }
+        image.setImageResource(android.R.drawable.ic_menu_agenda);
+        image.setContentDescription(label + "：" + attachment.getDisplayName());
+    }
+
+    private String fileExtension(String name) {
+        int dot = name == null ? -1 : name.lastIndexOf('.');
+        if (dot < 0 || dot == name.length() - 1) {
+            return "文件";
+        }
+        String extension = name.substring(dot + 1).toUpperCase(Locale.ROOT);
+        return extension.length() > 5 ? extension.substring(0, 5) : extension;
+    }
+
+    private Bitmap videoThumbnail(File file) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(file.getAbsolutePath());
+            return retriever.getFrameAtTime(
+                    0L,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+        } catch (RuntimeException error) {
+            return null;
+        } finally {
+            try {
+                retriever.release();
+            } catch (IOException | RuntimeException ignored) {
+                // The platform retrievers may already be released after an error.
+            }
+        }
+    }
+
+    private Bitmap decodeThumbnail(File file, int targetSize) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+        int sample = 1;
+        int largest = Math.max(bounds.outWidth, bounds.outHeight);
+        while (largest / sample > targetSize * 2 && sample < 16) {
+            sample *= 2;
+        }
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        return BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+    }
+
+    private void viewAttachment(AttachmentEntry attachment) {
+        switch (attachment.getKind()) {
+            case IMAGE:
+            case ANIMATED_STICKER:
+                showImagePreview(attachment);
+                break;
+            case VIDEO:
+                showVideoPreview(attachment);
+                break;
+            case AUDIO:
+                showAudioPreview(attachment);
+                break;
+            case DOCUMENT:
+            case OTHER:
+                showDocumentPreview(attachment);
+                break;
+            default:
+                openAttachmentExternally(attachment);
+                break;
         }
     }
 
@@ -653,6 +831,170 @@ public final class MainActivity extends Activity {
         return BitmapFactory.decodeFile(file.getAbsolutePath(), options);
     }
 
+    private void showVideoPreview(AttachmentEntry attachment) {
+        File file;
+        try {
+            file = attachmentStore.resolve(attachment.getLocalPath());
+        } catch (IOException error) {
+            toast("视频文件不可用");
+            return;
+        }
+        VideoView video = new VideoView(this);
+        video.setVideoURI(attachmentUri(attachment));
+        MediaController controller = new MediaController(this);
+        controller.setAnchorView(video);
+        video.setMediaController(controller);
+        video.setOnErrorListener((player, what, extra) -> {
+            toast("此视频无法在应用内播放：" + file.getName());
+            return true;
+        });
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(attachment.getDisplayName())
+                .setView(video)
+                .setPositiveButton("关闭", null)
+                .setNegativeButton("用其他应用打开", (ignored, which) ->
+                        openAttachmentExternally(attachment))
+                .create();
+        video.setOnPreparedListener(player -> {
+            player.setLooping(false);
+            video.start();
+        });
+        dialog.setOnDismissListener(ignored -> video.stopPlayback());
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setLayout(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private void showAudioPreview(AttachmentEntry attachment) {
+        MediaPlayer player = new MediaPlayer();
+        TextView state = text(
+                "正在准备音频…",
+                15,
+                getColor(R.color.text_primary),
+                Typeface.NORMAL);
+        state.setPadding(dp(22), dp(18), dp(22), dp(18));
+        state.setGravity(Gravity.CENTER);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(attachment.getDisplayName())
+                .setView(state)
+                .setPositiveButton("停止", null)
+                .setNegativeButton("用其他应用打开", (ignored, which) ->
+                        openAttachmentExternally(attachment))
+                .create();
+        try {
+            player.setDataSource(this, attachmentUri(attachment));
+            player.setOnPreparedListener(ready -> {
+                if (!dialog.isShowing()) {
+                    return;
+                }
+                state.setText("正在播放：" + kindLabel(attachment.getKind()));
+                ready.start();
+            });
+            player.setOnCompletionListener(finished ->
+                    state.setText("播放完毕"));
+            player.setOnErrorListener((failed, what, extra) -> {
+                state.setText("此音频无法在应用内播放");
+                return true;
+            });
+            dialog.setOnDismissListener(ignored -> player.release());
+            dialog.show();
+            player.prepareAsync();
+        } catch (IOException | RuntimeException error) {
+            player.release();
+            toast("音频文件不可用");
+        }
+    }
+
+    private void showDocumentPreview(AttachmentEntry attachment) {
+        File file;
+        try {
+            file = attachmentStore.resolve(attachment.getLocalPath());
+        } catch (IOException error) {
+            toast("文件不可用");
+            return;
+        }
+        if (isTextPreviewable(attachment)) {
+            showTextPreview(attachment, file);
+        } else {
+            showAttachmentInfo(attachment);
+        }
+    }
+
+    private void showTextPreview(AttachmentEntry attachment, File file) {
+        byte[] bytes = new byte[128 * 1024];
+        int total = 0;
+        boolean truncated = false;
+        try (FileInputStream input = new FileInputStream(file)) {
+            while (total < bytes.length) {
+                int read = input.read(bytes, total, bytes.length - total);
+                if (read == -1) {
+                    break;
+                }
+                total += read;
+            }
+            truncated = input.read() != -1;
+        } catch (IOException error) {
+            toast("无法读取文本文件");
+            return;
+        }
+        String content = new String(bytes, 0, total, StandardCharsets.UTF_8);
+        if (truncated) {
+            content += "\n\n… 文件较大，仅显示前 128 KB";
+        }
+        TextView textView = text(
+                content,
+                13,
+                getColor(R.color.text_primary),
+                Typeface.NORMAL);
+        textView.setTypeface(Typeface.MONOSPACE);
+        textView.setTextIsSelectable(true);
+        textView.setPadding(dp(18), dp(14), dp(18), dp(14));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(textView);
+        new AlertDialog.Builder(this)
+                .setTitle(attachment.getDisplayName())
+                .setView(scroll)
+                .setPositiveButton("关闭", null)
+                .setNegativeButton("用其他应用打开", (dialog, which) ->
+                        openAttachmentExternally(attachment))
+                .show();
+    }
+
+    private void showAttachmentInfo(AttachmentEntry attachment) {
+        new AlertDialog.Builder(this)
+                .setTitle(attachment.getDisplayName())
+                .setMessage(kindLabel(attachment.getKind())
+                        + "\n"
+                        + attachment.getMimeType()
+                        + "\n"
+                        + formatBytes(attachment.getSizeBytes())
+                        + "\n\n此格式需要调用系统内安装的查看器。文件已经保存在应用私有目录。")
+                .setPositiveButton("用其他应用打开", (dialog, which) ->
+                        openAttachmentExternally(attachment))
+                .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    private boolean isTextPreviewable(AttachmentEntry attachment) {
+        String mime = attachment.getMimeType().toLowerCase(Locale.ROOT);
+        if (mime.startsWith("text/")
+                || "application/json".equals(mime)
+                || "application/xml".equals(mime)) {
+            return true;
+        }
+        String name = attachment.getDisplayName().toLowerCase(Locale.ROOT);
+        return name.endsWith(".txt")
+                || name.endsWith(".log")
+                || name.endsWith(".csv")
+                || name.endsWith(".json")
+                || name.endsWith(".xml")
+                || name.endsWith(".md")
+                || name.endsWith(".html")
+                || name.endsWith(".htm");
+    }
     private void openAttachmentExternally(AttachmentEntry attachment) {
         try {
             attachmentStore.resolve(attachment.getLocalPath());
@@ -808,6 +1150,12 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_IMPORT_LOCAL_MEDIA) {
+            if (resultCode == RESULT_OK && data != null) {
+                importLocalMedia(selectedUris(data));
+            }
+            return;
+        }
         if (requestCode == REQUEST_IMPORT_MOECT) {
             if (resultCode == RESULT_OK
                     && data != null
@@ -845,6 +1193,21 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private List<Uri> selectedUris(Intent data) {
+        List<Uri> uris = new ArrayList<>();
+        ClipData clipData = data.getClipData();
+        if (clipData != null) {
+            for (int index = 0; index < clipData.getItemCount(); index++) {
+                Uri uri = clipData.getItemAt(index).getUri();
+                if (uri != null) {
+                    uris.add(uri);
+                }
+            }
+        } else if (data.getData() != null) {
+            uris.add(data.getData());
+        }
+        return uris;
+    }
     private void startActivitySafely(Intent intent) {
         try {
             startActivity(intent);

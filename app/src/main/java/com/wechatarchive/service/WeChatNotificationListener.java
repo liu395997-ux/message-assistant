@@ -1,9 +1,8 @@
 package com.wechatarchive.service;
 
 import android.app.Notification;
-import android.app.Person;
 import android.content.Intent;
-import android.os.Build;
+import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.os.Parcelable;
 import android.service.notification.NotificationListenerService;
@@ -16,9 +15,10 @@ import com.wechatarchive.domain.CapturedMessage;
 import com.wechatarchive.domain.NotificationParser;
 import com.wechatarchive.domain.RawMessage;
 import com.wechatarchive.domain.RawNotification;
+import com.wechatarchive.importing.AttachmentStore;
+import com.wechatarchive.importing.NotificationPictureArchiver;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 public final class WeChatNotificationListener extends NotificationListenerService {
@@ -47,14 +47,31 @@ public final class WeChatNotificationListener extends NotificationListenerServic
             return;
         }
 
-        ArchiveDatabase database = new ArchiveDatabase(this);
-        boolean inserted = false;
+        ArchiveDatabase database = ArchiveDatabase.getInstance(this);
+        AttachmentStore attachmentStore = new AttachmentStore(this);
+        long newestMessageId = -1L;
+        boolean hasMessage = false;
         for (CapturedMessage message : parser.parse(raw)) {
             if (policy.shouldCapture(raw.getPackageName(), message.getConversation())) {
-                inserted |= database.insert(message);
+                long messageId = database.insertOrGetId(message);
+                if (messageId > 0L) {
+                    newestMessageId = messageId;
+                    hasMessage = true;
+                }
             }
         }
-        if (inserted) {
+
+        Bitmap picture = notificationPicture(notification);
+        if (picture != null && newestMessageId > 0L) {
+            NotificationPictureArchiver.archive(
+                    this,
+                    database,
+                    attachmentStore,
+                    picture,
+                    newestMessageId,
+                    "notification:picture:" + statusBarNotification.getKey());
+        }
+        if (hasMessage) {
             sendBroadcast(new Intent(ACTION_ARCHIVE_UPDATED).setPackage(getPackageName()));
         }
     }
@@ -98,67 +115,16 @@ public final class WeChatNotificationListener extends NotificationListenerServic
     }
 
     @SuppressWarnings("deprecation")
+    private Bitmap notificationPicture(Notification notification) {
+        if (notification.extras == null) {
+            return null;
+        }
+        Parcelable value = notification.extras.getParcelable(Notification.EXTRA_PICTURE);
+        return value instanceof Bitmap ? (Bitmap) value : null;
+    }
     private List<RawMessage> extractMessagingStyle(Bundle extras) {
         Parcelable[] bundles = extras.getParcelableArray(Notification.EXTRA_MESSAGES);
-        if (bundles == null || bundles.length == 0) {
-            return Collections.emptyList();
-        }
-
-        List<Notification.MessagingStyle.Message> styleMessages = Build.VERSION.SDK_INT
-                >= Build.VERSION_CODES.R
-                ? Notification.MessagingStyle.Message.getMessagesFromBundleArray(bundles)
-                : null;
-        if (styleMessages == null || styleMessages.isEmpty()) {
-            return extractLegacyMessagingStyle(bundles);
-        }
-
-        List<RawMessage> messages = new ArrayList<>();
-        for (Notification.MessagingStyle.Message message : styleMessages) {
-            if (message == null) {
-                continue;
-            }
-            String sender = "";
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                Person senderPerson = message.getSenderPerson();
-                if (senderPerson != null) {
-                    sender = text(senderPerson.getName());
-                }
-            }
-            if (sender.isEmpty()) {
-                sender = text(message.getSender());
-            }
-            messages.add(new RawMessage(
-                    sender,
-                    text(message.getText()),
-                    message.getTimestamp()));
-        }
-        return messages;
-    }
-
-    @SuppressWarnings("deprecation")
-    private List<RawMessage> extractLegacyMessagingStyle(Parcelable[] bundles) {
-        List<RawMessage> messages = new ArrayList<>();
-        for (Parcelable parcelable : bundles) {
-            if (!(parcelable instanceof Bundle)) {
-                continue;
-            }
-            Bundle bundle = (Bundle) parcelable;
-            String sender = "";
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                Person person = bundle.getParcelable("sender_person");
-                if (person != null) {
-                    sender = text(person.getName());
-                }
-            }
-            if (sender.isEmpty()) {
-                sender = text(bundle.getCharSequence("sender"));
-            }
-            messages.add(new RawMessage(
-                    sender,
-                    text(bundle.getCharSequence("text")),
-                    bundle.getLong("time", 0L)));
-        }
-        return messages;
+        return MessagingStyleExtractor.extract(bundles);
     }
 
     private String text(CharSequence value) {

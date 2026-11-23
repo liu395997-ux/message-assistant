@@ -13,6 +13,7 @@ import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import com.wechatarchive.data.ArchiveDatabase;
+import com.wechatarchive.data.ArchiveDatabaseTestSupport;
 import com.wechatarchive.data.AttachmentEntry;
 import com.wechatarchive.domain.CapturedMessage;
 import com.wechatarchive.domain.importer.AttachmentKind;
@@ -38,6 +39,7 @@ public final class AttachmentContentProviderTest {
     @Before
     public void setUp() {
         context = ApplicationProvider.getApplicationContext();
+        ArchiveDatabaseTestSupport.resetSharedInstance();
         context.deleteDatabase(ArchiveDatabase.DATABASE_NAME);
         store = new AttachmentStore(context);
         store.clear();
@@ -47,6 +49,7 @@ public final class AttachmentContentProviderTest {
     @After
     public void tearDown() {
         database.close();
+        ArchiveDatabaseTestSupport.resetSharedInstance();
         context.deleteDatabase(ArchiveDatabase.DATABASE_NAME);
         store.clear();
     }

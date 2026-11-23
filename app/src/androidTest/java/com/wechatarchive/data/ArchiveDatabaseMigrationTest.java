@@ -28,11 +28,13 @@ public final class ArchiveDatabaseMigrationTest {
     @Before
     public void setUp() {
         context = ApplicationProvider.getApplicationContext();
+        ArchiveDatabaseTestSupport.resetSharedInstance();
         context.deleteDatabase(ArchiveDatabase.DATABASE_NAME);
     }
 
     @After
     public void tearDown() {
+        ArchiveDatabaseTestSupport.resetSharedInstance();
         context.deleteDatabase(ArchiveDatabase.DATABASE_NAME);
     }
 

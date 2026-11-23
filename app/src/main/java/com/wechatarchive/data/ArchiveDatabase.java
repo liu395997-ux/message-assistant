@@ -45,8 +45,36 @@ public final class ArchiveDatabase extends SQLiteOpenHelper {
     private static final String ATTACHMENT_STATUS = "status";
     private static final String ATTACHMENT_CREATED_AT = "created_at";
 
+    private static volatile ArchiveDatabase instance;
+
+    public static ArchiveDatabase getInstance(Context context) {
+        if (context == null) {
+            throw new IllegalArgumentException("context is required");
+        }
+        ArchiveDatabase current = instance;
+        if (current == null) {
+            synchronized (ArchiveDatabase.class) {
+                current = instance;
+                if (current == null) {
+                    current = new ArchiveDatabase(context.getApplicationContext());
+                    instance = current;
+                }
+            }
+        }
+        return current;
+    }
+
     public ArchiveDatabase(Context context) {
         super(context.getApplicationContext(), DATABASE_NAME, null, DATABASE_VERSION);
+    }
+
+    static void resetInstanceForTests() {
+        synchronized (ArchiveDatabase.class) {
+            if (instance != null) {
+                instance.close();
+                instance = null;
+            }
+        }
     }
 
     @Override
